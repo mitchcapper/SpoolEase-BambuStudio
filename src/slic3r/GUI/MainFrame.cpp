@@ -71,6 +71,7 @@
 #include "DeviceCore/DevManager.h"
 #include "slic3r/GUI/DeviceWeb/DeviceWebPage.hpp"
 #include "spoolease/SpoolEaseConfigDialog.hpp"
+#include "spoolease/SpoolEaseWebPage.hpp"
 
 #ifdef _WIN32
 #include <dbt.h>
@@ -1479,6 +1480,7 @@ void MainFrame::init_tabpanel()
         if (panel
 #if defined(__WXOSX__)
             && panel != m_web_device
+            && panel != m_spoolease_page
 #endif
         )
             panel->SetFocus();
@@ -1554,6 +1556,9 @@ void MainFrame::init_tabpanel()
         m_web_device = new DeviceWebPage(m_tabpanel);
         m_tabpanel->AddPage(m_web_device, _L("Filament Manager"), std::string("tab_filament_active"), std::string("tab_filament_active"), false);
     }
+
+    m_spoolease_page = Slic3r::SpoolEase::create_web_page(m_tabpanel);
+    m_tabpanel->AddPage(m_spoolease_page, _L("SpoolEase"), std::string("tab_filament_active"), std::string("tab_filament_active"), false);
 
     if (m_plater) {
         // load initial config
