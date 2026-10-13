@@ -124,13 +124,21 @@ jobs:
           choco install nsis
           choco install pkgconfiglite
 
+      # The newest installed 10.* SDK that ships the Printing3D WinRT header is
+      # resolved at runtime; without it CMake silently drops HAS_WIN10SDK and the
+      # Windows "Fix model" (Netfabb repair) option is compiled out.
       - name: Build slicer Win
         if: inputs.os == 'windows-latest'
         working-directory: ${{ github.workspace }}
+        shell: pwsh
         run: |
+          $sdkRoot = "C:/Program Files (x86)/Windows Kits/10/Include"
+          $sdk = (Get-ChildItem $sdkRoot -Directory | Where-Object { $_.Name -match '^10\.' -and (Test-Path (Join-Path $_.FullName 'winrt/windows.graphics.printing3d.h')) } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1).FullName
+          if (-not $sdk) { throw "No Windows 10 SDK with winrt/windows.graphics.printing3d.h found under $sdkRoot" }
+          Write-Output "Using Windows SDK: $sdk"
           mkdir build
           cd build
-          cmake .. -G "Visual Studio 18 2026" -A X64 -DBBL_RELEASE_TO_PUBLIC=1 -DBBL_INTERNAL_TESTING=0 -DCMAKE_PREFIX_PATH="${{ github.workspace }}\deps\build\BambuStudio_dep\usr\local" -DCMAKE_INSTALL_PREFIX="../install-dir" -DCMAKE_BUILD_TYPE=Release -DWIN10SDK_PATH="C:/Program Files (x86)/Windows Kits/10/Include/10.0.22000.0"
+          cmake .. -G "Visual Studio 18 2026" -A X64 -DBBL_RELEASE_TO_PUBLIC=1 -DBBL_INTERNAL_TESTING=0 -DCMAKE_PREFIX_PATH="${{ github.workspace }}\deps\build\BambuStudio_dep\usr\local" -DCMAKE_INSTALL_PREFIX="../install-dir" -DCMAKE_BUILD_TYPE=Release -DWIN10SDK_PATH="$sdk"
           cmake --build . --target install --config Release -- -m
 
       # Windows on ARM64/ARM64EC: VS 2022 generator (the arm runner has no VS
