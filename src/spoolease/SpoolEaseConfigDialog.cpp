@@ -284,10 +284,8 @@ private:
         add_backup_folder_row(page, page_sizer);
         add_auto_backup_row(page, page_sizer);
 
-        if (m_loaded_config.has_value() && m_loaded_config->proxy_printer_messages_configured) {
-            page_sizer->Add(make_section_title(page, _L("Advanced")), 0, wxEXPAND | wxTOP, FromDIP(22));
-            add_proxy_printer_messages_row(page, page_sizer);
-        }
+        page_sizer->Add(make_section_title(page, _L("Advanced")), 0, wxEXPAND | wxTOP, FromDIP(22));
+        add_proxy_printer_messages_row(page, page_sizer);
 
         page_sizer->Add(make_section_title(page, _L("Console")), 0, wxEXPAND | wxTOP, FromDIP(22));
         add_config_path(page, page_sizer);

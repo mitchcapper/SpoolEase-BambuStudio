@@ -222,6 +222,9 @@ void schedule_message(std::string message)
             }
             json payload = *payload_it;
             const std::string command = payload_print_field(payload, "command");
+            SPOOLEASE_LOG(info) << "SpoolEase: slicer proxy received: printer=" << printer_serial
+                                << " command=" << command
+                                << " console_sequence_id=" << payload_print_field(payload, "sequence_id");
 
             Slic3r::GUI::GUI_App& app = Slic3r::GUI::wxGetApp();
             DeviceManager* device_manager = app.getDeviceManager();
@@ -238,22 +241,20 @@ void schedule_message(std::string message)
                 return;
             }
 
-            if (target->is_lan_mode_printer()) {
-                set_live_status_warning(proxy_status_key, "Printer is not configured for cloud sending in Bambu Studio.");
-                SPOOLEASE_LOG(warning) << "SpoolEase: slicer proxy skipped LAN printer=" << printer_serial;
-                return;
-            }
-
-            NetworkAgent* agent = app.getAgent();
-            if (!agent || !agent->is_user_login()) {
-                set_live_status_error(proxy_status_key, "Bambu account is not logged in for cloud sending.");
-                SPOOLEASE_LOG(warning) << "SpoolEase: slicer proxy failed: Bambu account not logged in";
-                return;
-            }
-            if (!agent->is_server_connected()) {
-                set_live_status_error(proxy_status_key, "Bambu cloud connection is not available.");
-                SPOOLEASE_LOG(warning) << "SpoolEase: slicer proxy failed: cloud server not connected";
-                return;
+            const bool lan_mode = target->is_lan_mode_printer();
+            const char* route = lan_mode ? "lan" : "cloud";
+            if (!lan_mode) {
+                NetworkAgent* agent = app.getAgent();
+                if (!agent || !agent->is_user_login()) {
+                    set_live_status_error(proxy_status_key, "Bambu account is not logged in for cloud sending.");
+                    SPOOLEASE_LOG(warning) << "SpoolEase: slicer proxy failed: Bambu account not logged in";
+                    return;
+                }
+                if (!agent->is_server_connected()) {
+                    set_live_status_error(proxy_status_key, "Bambu cloud connection is not available.");
+                    SPOOLEASE_LOG(warning) << "SpoolEase: slicer proxy failed: cloud server not connected";
+                    return;
+                }
             }
 
             auto replace_sequence_ids = [](json& item, const std::string& sequence_id, const auto& self) -> size_t {
@@ -287,16 +288,21 @@ void schedule_message(std::string message)
             }
 
             const std::string outgoing_payload = payload.dump();
-            const int result = target->cloud_publish_json(outgoing_payload, 0, 0);
+            const int result = lan_mode ? target->local_publish_json(outgoing_payload, 0, 0) : target->cloud_publish_json(outgoing_payload, 0, 0);
             if (result != 0) {
-                set_live_status_error(proxy_status_key, "Bambu cloud send failed for proxied printer message.");
-                SPOOLEASE_LOG(warning) << "SpoolEase: slicer proxy cloud send failed: printer=" << printer_serial
+                set_live_status_error(proxy_status_key, "Bambu Studio failed to send proxied printer message.");
+                SPOOLEASE_LOG(warning) << "SpoolEase: slicer proxy send failed: printer=" << printer_serial
+                                      << " route=" << route
                                       << " command=" << command
                                       << " studio_sequence_id=" << sequence_id
                                       << " code=" << result;
                 return;
             }
 
+            SPOOLEASE_LOG(info) << "SpoolEase: slicer proxy sent: printer=" << printer_serial
+                                << " route=" << route
+                                << " command=" << command
+                                << " studio_sequence_id=" << sequence_id;
             clear_live_status(proxy_status_key);
         } catch (const std::exception& e) {
             set_live_status_error(proxy_status_key, "Slicer proxy message is invalid JSON.");
@@ -401,35 +407,38 @@ private:
             active->io_context->stop();
     }
 
+    void idle(const char* reason)
+    {
+        if (m_last_idle_reason != reason) {
+            m_last_idle_reason = reason;
+            SPOOLEASE_LOG(info) << "SpoolEase: slicer WebSocket idle: " << reason;
+        }
+        clear_live_status(ws_status_key);
+        clear_live_status(proxy_status_key);
+        wait_or_wake(reconnect_interval);
+    }
+
     void run()
     {
         SPOOLEASE_LOG(info) << "SpoolEase: slicer WebSocket loop started";
         while (!m_stop) {
             const std::optional<ConsoleConfig> config = console_config(false, "slicer_ws");
             if (!config.has_value()) {
-                clear_live_status(ws_status_key);
-                clear_live_status(proxy_status_key);
-                wait_or_wake(reconnect_interval);
+                idle("no console config");
                 continue;
             }
-            if (!config->proxy_printer_messages_configured) {
-                clear_live_status(ws_status_key);
-                clear_live_status(proxy_status_key);
-                wait_or_wake(reconnect_interval);
+            if (!config->proxy_printer_messages_enabled()) {
+                idle("printer message proxy disabled (console.proxy_printer_messages)");
                 continue;
             }
+            m_last_idle_reason.clear();
 
             try {
                 connect_and_read(*config);
             } catch (const UnsupportedSlicerWebSocket& e) {
                 if (!m_stop) {
-                    if (config->proxy_printer_messages_enabled()) {
-                        set_live_status_warning(ws_status_key, "Console version does not support slicer proxy.");
-                        SPOOLEASE_LOG(warning) << "SpoolEase: slicer WebSocket unsupported by console: error=\"" << e.what() << "\"";
-                    } else {
-                        clear_live_status(ws_status_key);
-                        SPOOLEASE_LOG(info) << "SpoolEase: slicer WebSocket unsupported by console; proxy disabled";
-                    }
+                    set_live_status_warning(ws_status_key, "Console version does not support slicer proxy.");
+                    SPOOLEASE_LOG(warning) << "SpoolEase: slicer WebSocket unsupported by console: error=\"" << e.what() << "\"";
                     wait_for_config_change(unsupported_state_key(*config));
                 }
                 continue;
@@ -661,6 +670,7 @@ private:
     std::atomic_bool        m_stop{false};
     std::atomic_bool        m_wake{false};
     std::weak_ptr<ActiveIo> m_active_io;
+    std::string             m_last_idle_reason;
     bool                    m_started{false};
 };
 
